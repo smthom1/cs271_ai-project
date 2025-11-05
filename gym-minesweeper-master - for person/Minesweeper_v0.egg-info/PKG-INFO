@@ -1,0 +1,6 @@
+Metadata-Version: 2.4
+Name: Minesweeper-v0
+Version: 0.1
+Requires-Dist: numpy
+Requires-Dist: gym
+Dynamic: requires-dist
