@@ -48,6 +48,7 @@ def is_mine(board, x, y):
     return board[x, y] == MINE
 
 def place_mines(board_size, num_mines):
+    # ** standard mine placing **
     mines_placed = 0
     board = np.zeros((board_size, board_size), dtype=int)
     while mines_placed < num_mines:
@@ -61,6 +62,25 @@ def place_mines(board_size, num_mines):
     return board
 
 # Visualizer Class!! ========================
+
+# ++ bad luck protection
+def place_mines_safely(board_size, num_mines, first_x, first_y):
+    # places mines on board but confirms that first cell (first_x, first_y) is NOT a mine
+    # is *not* a mine); no losing on the first move
+    mines_placed = 0
+    board = np.zeros((board_size, board_size), dtype=int)
+    
+    while mines_placed < num_mines:
+        rnd = randint(0, board_size * board_size - 1)
+        x = int(rnd / board_size)
+        y = int(rnd % board_size)
+        
+        # Check if the random (x, y) is valid AND not the first-move cell
+        if is_valid(x, y) and not is_mine(board, x, y) and (x != first_x or y != first_y):
+            board[x, y] = MINE
+            mines_placed += 1
+            
+    return board
 
 class MinesweeperVisualizer:
     """
@@ -309,6 +329,7 @@ class MinesweeperDiscreetEnv(gym.Env):
     """
     This version uses a discrete action space (0-99) and supports
     Pygame rendering, flagging, score, and bomb count display.
+        → WITH the bad luck protection
     """
     metadata = {"render_modes": ["ansi", "human"], "render_fps": 10}
 
@@ -316,14 +337,18 @@ class MinesweeperDiscreetEnv(gym.Env):
         
         self.board_size = board_size
         self.num_mines = num_mines
-        self.board = place_mines(board_size, num_mines)
+        # self.board = place_mines(board_size, num_mines)
+        self.board = None # will be set on first move
         self.my_board = np.ones((self.board_size, self.board_size), dtype=int) * CLOSED
         self.num_actions = 0
         
         self.total_reward = 0
         self.flags_placed = 0
-        self.game_over_status = None # New: None, "win", or "loss"
+        self.game_over_status = None
 
+        # ++ NEW part: flag to track if first move has been made
+        self.first_move_made = False
+        
         self.observation_space = spaces.Box(low=-3, high=8, 
                                             shape=(self.board_size, self.board_size), dtype=int)
         self.action_space = spaces.Discrete(self.board_size * self.board_size)
@@ -344,6 +369,12 @@ class MinesweeperDiscreetEnv(gym.Env):
         return neighbour_mines
 
     def open_neighbour_cells(self, my_board, x, y):
+        # safety check
+        if self.board is None:
+            # should NOT happen if logic is correct, just a safeguard
+            print("Error: Tried to open cells before board was generated.")
+            return my_board
+        
         for _x in range(x-1, x+2):
             for _y in range(y-1, y+2):
                 if is_valid(_x, _y):
@@ -356,6 +387,12 @@ class MinesweeperDiscreetEnv(gym.Env):
     def get_next_state(self, state, x, y):
         my_board = state
         game_over = False
+        
+        # safety check, make sure board is generated BEFORE checking for mines
+        if self.board is None:
+            #would be a logic error if occurred
+            raise Exception("gen_next_state called before self.board is generated")
+        
         if is_mine(self.board, x, y):
             my_board[x, y] = MINE
             game_over = True
@@ -368,14 +405,20 @@ class MinesweeperDiscreetEnv(gym.Env):
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
+        
+        #reset 'my_board' (player view)
         self.my_board = np.ones((self.board_size, self.board_size), dtype=int) * CLOSED
-        self.board = place_mines(self.board_size, self.num_mines)
+        
+        #self.board = place_mines(self.board_size, self.num_mines)
+        self.board = None # will be set on first move
         self.num_actions = 0
         self.valid_actions = np.ones((self.board_size * self.board_size), dtype=bool)
         
         self.total_reward = 0
         self.flags_placed = 0
         self.game_over_status = None # RESET status
+        
+        self.first_move_made = False
         
         info = {'valid_actions': self.valid_actions}
         
@@ -388,6 +431,13 @@ class MinesweeperDiscreetEnv(gym.Env):
         state = self.my_board
         x = int(action / self.board_size)
         y = int(action % self.board_size)
+        
+        # BAD LUCK PROTECTION (first move)
+        if not self.first_move_made:
+            self.first_move_made = True
+            self.board = place_mines_safely(self.board_size, self.num_mines, x, y)
+            # *debug print*
+            print(f"First move at ({x}, {y}). Board generated.")
 
         next_state, reward, done, info = self.next_step(state, x, y)
         
