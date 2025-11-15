@@ -18,3 +18,6 @@ Alternatively, execute the `setup.py` folder by running this:
 pip install -e .
 ```
 
+## Acknowledgements
+Our Minesweeper AI agent is based on A. Aylin Tokuc's gym-minesweeper environment.
+- Repository: http://github.com/aylint/gym-minesweeper
