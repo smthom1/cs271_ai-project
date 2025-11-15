@@ -263,10 +263,15 @@ class MinesweeperEnv(gym.Env):
     def get_next_state(self, state, x, y):
         my_board = state
         game_over = False
+        
+        if self.board is None:
+            raise Exception("gen_next_state called before self.board is generated")
+        
         if is_mine(self.board, x, y):
             my_board[x, y] = MINE
             game_over = True
         else:
+            my_board[x,y] = self.count_neighbor_mines(x,y)
             #[x, y] = self.count_neighbour_mines(x, y)
             if my_board[x, y] == 0:
                 my_board = self.open_neighbour_cells(my_board, x, y)
