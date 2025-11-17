@@ -69,19 +69,30 @@ def place_mines(board_size, num_mines):
 def place_mines_safely(board_size, num_mines, first_x, first_y):
     # places mines on board but confirms that first cell (first_x, first_y) is NOT a mine
     # is *not* a mine); no losing on the first move
-    mines_placed = 0
+    # also prevent mines from being placed around the first spot, eg first move always
+    # expands a large space
+    forbidden = set()
+    for x in range(first_x - 1, first_x + 2):
+        for y in range(first_y - 1, first_y + 2):
+            if 0 <= x < board_size and 0 <= y < board_size:
+                forbidden.add((x, y))  
+
     board = np.zeros((board_size, board_size), dtype=int)
-    
+    mines_placed = 0
+
     while mines_placed < num_mines:
         rnd = randint(0, board_size * board_size - 1)
-        x = int(rnd / board_size)
-        y = int(rnd % board_size)
-        
+        x = rnd // board_size
+        y = rnd % board_size
+
+        if (x, y) in forbidden:
+            continue
+
         # Check if the random (x, y) is valid AND not the first-move cell
         if is_valid(x, y) and not is_mine(board, x, y) and (x != first_x or y != first_y):
             board[x, y] = MINE
             mines_placed += 1
-            
+
     return board
 
 class MinesweeperVisualizer:
