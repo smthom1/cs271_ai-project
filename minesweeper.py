@@ -1,28 +1,21 @@
 import sys
-from six import StringIO
-from random import randint
-import time
-
+from random import randint, seed, random
 import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
 
+# --- IMPORTS ---
+from constants import DEFAULT_BOARD_SIZE, CLOSED, MINE, FLAG
 from constraints import generate_constraints
 
 try:
     import pygame
 except ImportError:
     print("Pygame not found. Please install it with: pip install pygame")
-    sys.exit(1)
+    # We don't exit here to allow headless agents to run without pygame if needed
+    pass
 
-# --- Constants ---
-BOARD_SIZE = 10
-NUM_MINES = 9
-CLOSED = -2
-MINE = -1
-FLAG = -3
-
-# --- Helper Functions (Unchanged) ---
+# --- Helper Functions ---
 
 def board2str(board, end='\n'):
     s = ''
@@ -35,42 +28,17 @@ def board2str(board, end='\n'):
 def is_new_move(my_board, x, y):
     return my_board[x, y] == CLOSED
 
-def is_valid(x, y):
-    return (x >= 0) & (x < BOARD_SIZE) & (y >= 0) & (y < BOARD_SIZE)
+def is_valid(x, y, board_size):
+    return (x >= 0) & (x < board_size) & (y >= 0) & (y < board_size)
 
-def is_win(my_board):
-    """ return if the game is won """
-    # num of cells hidden (closed or flagged)
+def is_win(my_board, num_mines):
     unopened_cells = np.count_nonzero(my_board == CLOSED) + np.count_nonzero(my_board == FLAG)
-
-    # game = won given num of unoopened_cells == num of mines
-    return unopened_cells == NUM_MINES
+    return unopened_cells == num_mines
 
 def is_mine(board, x, y):
     return board[x, y] == MINE
 
-def place_mines(board_size, num_mines):
-    # ** standard mine placing **
-    mines_placed = 0
-    board = np.zeros((board_size, board_size), dtype=int)
-    while mines_placed < num_mines:
-        rnd = randint(0, board_size * board_size - 1)
-        x = int(rnd / board_size)
-        y = int(rnd % board_size)
-        if is_valid(x, y):
-            if not is_mine(board, x, y):
-                board[x, y] = MINE
-                mines_placed += 1
-    return board
-
-# Visualizer Class ========================
-
-# ++ bad luck protection
 def place_mines_safely(board_size, num_mines, first_x, first_y):
-    # places mines on board but confirms that first cell (first_x, first_y) is NOT a mine
-    # is *not* a mine); no losing on the first move
-    # also prevent mines from being placed around the first spot, eg first move always
-    # expands a large space
     forbidden = set()
     for x in range(first_x - 1, first_x + 2):
         for y in range(first_y - 1, first_y + 2):
@@ -88,531 +56,353 @@ def place_mines_safely(board_size, num_mines, first_x, first_y):
         if (x, y) in forbidden:
             continue
 
-        # Check if the random (x, y) is valid AND not the first-move cell
-        if is_valid(x, y) and not is_mine(board, x, y) and (x != first_x or y != first_y):
+        if is_valid(x, y, board_size) and not is_mine(board, x, y):
             board[x, y] = MINE
             mines_placed += 1
 
     return board
 
+# --- Visualizer ---
+
 class MinesweeperVisualizer:
-    """
-    Handles all Pygame rendering for the Minesweeper environment.
-    """
-    def __init__(self, board_size, cell_size=40):
-        self.board_size = board_size
+    def __init__(self, view_width, view_height, cell_size=30):
+        self.view_width_cells = view_width
+        self.view_height_cells = view_height
         self.cell_size = cell_size
-        self.HEADER_HEIGHT = 60                 # shove some space in here to allow info vis
+        self.HEADER_HEIGHT = 60
         
-        self.CONSTRAINT_WIDTH = 250
-        self.window_size_x = self.board_size * self.cell_size + self.CONSTRAINT_WIDTH
-        self.window_size_y = self.board_size * self.cell_size + self.HEADER_HEIGHT
+        self.CONSTRAINT_WIDTH = 250 
+        self.window_size_x = self.view_width_cells * self.cell_size + self.CONSTRAINT_WIDTH
+        self.window_size_y = self.view_height_cells * self.cell_size + self.HEADER_HEIGHT
         
         self.window = None
         self.clock = None
         self.cell_font = None
         self.header_font = None
-        self.game_over_font = None              # game over font
-        
         self.constraint_font = None
         self.flag_icon = None
 
-        # colors
         self.colors = {
-            "header_bg": (50, 50, 50),
+            "header_bg": (40, 40, 40),
             "header_text": (255, 255, 255),
             "closed": (180, 180, 180),
-            "flag": (255, 180, 0),              # flags are orange hex
-            "open": (210, 210, 210),
-            "grid": (120, 120, 120),
-            "mine": (255, 0, 0),
+            "flag": (255, 165, 0),
+            "open": (220, 220, 220),
+            "grid": (100, 100, 100),
+            "mine": (200, 0, 0),
             "text": (0, 0, 0),
-            1: (0, 0, 255),     # 1: Blue
-            2: (0, 128, 0),     # 2: Green
-            3: (255, 0, 0),     # 3: Red
-            4: (0, 0, 128),     # 4: Dark Blue
-            5: (128, 0, 0),     # 5: Maroon
-            6: (0, 128, 128),   # 6: Teal
-            7: (0, 0, 0),       # 7: Black
-            8: (128, 128, 128)  # 8: Gray
+            1: (0, 0, 255), 2: (0, 128, 0), 3: (255, 0, 0), 4: (0, 0, 128),
+            5: (128, 0, 0), 6: (0, 128, 128), 7: (0, 0, 0), 8: (128, 128, 128)
         }
 
     def _init_pygame(self):
-        """Initialize Pygame, create window, font, and clock."""
+        if 'pygame' not in sys.modules: return
         pygame.init()
-        pygame.display.set_caption("Minesweeper")
+        pygame.display.set_caption("Minesweeper AI Environment")
         self.window = pygame.display.set_mode((self.window_size_x, self.window_size_y))
         self.clock = pygame.time.Clock()
-        try:
-            self.cell_font = pygame.font.Font(None, int(self.cell_size * 0.8))
-            self.header_font = pygame.font.Font(None, int(self.HEADER_HEIGHT * 0.6))
-            self.game_over_font = pygame.font.Font(None, int(self.cell_size * 1.5))
-            self.constraint_font = pygame.font.Font(None, 24)
-        except:
-            self.cell_font = pygame.font.SysFont('Arial', int(self.cell_size * 0.8))
-            self.header_font = pygame.font.SysFont('Arial', int(self.HEADER_HEIGHT * 0.6))
-            self.game_over_font = pygame.font.SysFont('Arial', int(self.cell_size * 1.5))
-            self.constraint_font = pygame.font.SysFont('Arial', 18)
-
+        
+        font_size = int(self.cell_size * 0.8)
+        self.cell_font = pygame.font.SysFont('Arial', font_size, bold=True)
+        self.header_font = pygame.font.SysFont('Arial', 20)
+        self.constraint_font = pygame.font.SysFont('Consolas', 14)
 
         try:
             self.flag_icon = pygame.image.load("flag_icon.png")
-            # Scale the icon to fit nicely in the cell (e.g., 70% of cell size)
-            icon_size = int(self.cell_size * 0.7)
+            icon_size = int(self.cell_size * 0.6)
             self.flag_icon = pygame.transform.scale(self.flag_icon, (icon_size, icon_size))
-        except pygame.error as e:
-            print(f"Warning: Could not load 'flag_icon.png'. Using fallback. Error: {e}")
+        except:
             self.flag_icon = None
 
-
-    def render_frame(self, board, score, bombs_left, game_over_status=None, constraints=None):
-        """Render the current board state to the Pygame window."""
+    def render_frame(self, board_getter, camera_x, camera_y, score, status, constraints=None):
+        if 'pygame' not in sys.modules: return
         if self.window is None:
             self._init_pygame()
         
         self.window.fill(self.colors["header_bg"])
-        header_rect = pygame.Rect(0, 0, self.window_size_x, self.HEADER_HEIGHT)
-        pygame.draw.rect(self.window, self.colors["header_bg"], header_rect)
         
-        score_text = self.header_font.render(f"Score: {score}", True, self.colors["header_text"])
-        score_rect = score_text.get_rect(midleft=(20, self.HEADER_HEIGHT // 2))
-        self.window.blit(score_text, score_rect)
+        # Header
+        header_text = f"Score: {score}"
+        if status == "win": header_text += " | WIN!"
+        elif status == "loss": header_text += " | GAME OVER"
         
-        bomb_text = self.header_font.render(f"Bombs: {bombs_left}", True, self.colors["header_text"])
-        bomb_rect = bomb_text.get_rect(midright=(self.board_size * self.cell_size - 20, self.HEADER_HEIGHT // 2))
-        self.window.blit(bomb_text, bomb_rect)
-
-        # Draw board cells ===
-        for r in range(self.board_size):
-            for c in range(self.board_size):
-                val = board[r, c]
+        score_surf = self.header_font.render(header_text, True, self.colors["header_text"])
+        self.window.blit(score_surf, (20, self.HEADER_HEIGHT // 2 - 10))
+        
+        # Grid
+        for r in range(self.view_height_cells):
+            for c in range(self.view_width_cells):
+                world_x = camera_x + c
+                world_y = camera_y + r
+                
+                val = board_getter(world_y, world_x)
+                
                 rect = pygame.Rect(c * self.cell_size, 
                                    r * self.cell_size + self.HEADER_HEIGHT, 
                                    self.cell_size, self.cell_size)
                 
-                if val == CLOSED:
+                if val == CLOSED or val == FLAG:
                     pygame.draw.rect(self.window, self.colors["closed"], rect)
-                    pygame.draw.line(self.window, (255,255,255), rect.topleft, rect.topright, 2)
-                    pygame.draw.line(self.window, (255,255,255), rect.topleft, rect.bottomleft, 2)
-                    pygame.draw.line(self.window, (100,100,100), rect.bottomright, rect.topright, 2)
-                    pygame.draw.line(self.window, (100,100,100), rect.bottomright, rect.bottomleft, 2)
-                
-                elif val == FLAG:
-                    # Draw the same beveled background as a CLOSED cell
-                    pygame.draw.rect(self.window, self.colors["closed"], rect)
-                    pygame.draw.line(self.window, (255,255,255), rect.topleft, rect.topright, 2)
-                    pygame.draw.line(self.window, (255,255,255), rect.topleft, rect.bottomleft, 2)
-                    pygame.draw.line(self.window, (100,100,100), rect.bottomright, rect.topright, 2)
-                    pygame.draw.line(self.window, (100,100,100), rect.bottomright, rect.bottomleft, 2)
-                    
-                    if self.flag_icon:
-                        # icon loaded, blit it in center
-                        icon_rect = self.flag_icon.get_rect(center=rect.center)
-                        self.window.blit(self.flag_icon, icon_rect)
-                    else:
-                        # OR to old rendering
-                        pygame.draw.rect(self.window, self.colors["flag"], rect.inflate(-10, -10))
-                        text = self.cell_font.render("F", True, self.colors["text"])
-                        text_rect = text.get_rect(center=rect.center)
-                        self.window.blit(text, text_rect)
-                
                 elif val == MINE:
                     pygame.draw.rect(self.window, self.colors["mine"], rect)
-                    pygame.draw.circle(self.window, self.colors["text"], rect.center, int(self.cell_size * 0.3))
-
-                elif val >= 0:
+                else:
                     pygame.draw.rect(self.window, self.colors["open"], rect)
-                    if val > 0:
-                        text_color = self.colors.get(val, self.colors["text"])
-                        text = self.cell_font.render(str(val), True, text_color)
-                        text_rect = text.get_rect(center=rect.center)
-                        self.window.blit(text, text_rect)
                 
                 pygame.draw.rect(self.window, self.colors["grid"], rect, 1)
 
-        constraint_area_rect = pygame.Rect(
-            self.board_size * self.cell_size,  # X start (after board)
-            self.HEADER_HEIGHT,                # Y start (after header)
-            self.CONSTRAINT_WIDTH,             # Width
-            self.window_size_y - self.HEADER_HEIGHT # Height
+                if val == FLAG:
+                    if self.flag_icon:
+                        icon_rect = self.flag_icon.get_rect(center=rect.center)
+                        self.window.blit(self.flag_icon, icon_rect)
+                    else:
+                        pygame.draw.circle(self.window, self.colors["flag"], rect.center, self.cell_size//4)
+                elif val == MINE:
+                    pygame.draw.circle(self.window, (0,0,0), rect.center, self.cell_size//3)
+                elif val > 0:
+                    text_color = self.colors.get(val, self.colors["text"])
+                    text = self.cell_font.render(str(val), True, text_color)
+                    text_rect = text.get_rect(center=rect.center)
+                    self.window.blit(text, text_rect)
+
+        # Constraints
+        sidebar_rect = pygame.Rect(
+            self.view_width_cells * self.cell_size, 
+            self.HEADER_HEIGHT, 
+            self.CONSTRAINT_WIDTH, 
+            self.window_size_y - self.HEADER_HEIGHT
         )
-        pygame.draw.rect(self.window, self.colors["header_bg"], constraint_area_rect)
+        pygame.draw.rect(self.window, (30, 30, 30), sidebar_rect)
+        
+        title = self.header_font.render("Active Constraints", True, (255, 255, 255))
+        self.window.blit(title, (sidebar_rect.x + 10, sidebar_rect.y + 10))
 
         if constraints:
-            current_y = self.HEADER_HEIGHT + 20
-            sidebar_x_start = self.board_size * self.cell_size + 15
-            
-            # Draw Title
-            title_text = self.header_font.render("Live Constraints", True, self.colors["header_text"])
-            title_rect = title_text.get_rect(topleft=(sidebar_x_start, current_y))
-            self.window.blit(title_text, title_rect)
-            current_y += 40
-
-            # draw each constraint
-            for i, (cells, bombs) in enumerate(constraints):
-                # Stop if we run out of vertical space
-                if current_y > self.window_size_y - 30:
-                    break 
+            y_offset = sidebar_rect.y + 40
+            for i, (cells, bombs) in enumerate(constraints[:20]):
+                cell_str = str(cells).replace("),", "), ")
+                if len(cell_str) > 20: cell_str = cell_str[:18] + "..."
                 
-                # format of "C1: 1 bomb in 2 cells"
-                # basically means: "found that revealed number cell (e.g., 1, 2 with flag next to it) knows there is x amount of bombs next to it"
-                constraint_str = f"C{i+1}: {bombs} bomb(s) in {len(cells)} cells"
-                text_surface = self.constraint_font.render(constraint_str, True, self.colors["header_text"])
-                text_rect = text_surface.get_rect(topleft=(sidebar_x_start, current_y))
-                self.window.blit(text_surface, text_rect)
-                current_y += 25 # Move down for next line
+                txt = f"{bombs} mine{'s' if bombs!=1 else ''} in {len(cells)} cells"
+                tsurf = self.constraint_font.render(txt, True, (200, 200, 200))
+                self.window.blit(tsurf, (sidebar_rect.x + 10, y_offset))
+                
+                csurf = self.constraint_font.render(cell_str, True, (150, 150, 150))
+                self.window.blit(csurf, (sidebar_rect.x + 10, y_offset + 15))
+                y_offset += 40
 
-                # maybe: list the cells involved ---
-                # cell_str = f"   {cells}"
-                # cell_surface = self.constraint_font.render(cell_str, True, (180, 180, 180))
-                # cell_rect = cell_surface.get_rect(topleft=(sidebar_x_start, current_y))
-                # self.window.blit(cell_surface, cell_rect)
-                # current_y += 20
-        
-        # Game overlay (game over) ===
-        if game_over_status:
-            # semi-transparent overlay from pygame documentation: https://www.pygame.org/docs/ref/surface.html
-            overlay_rect = pygame.Rect(0, self.HEADER_HEIGHT, self.window_size_x, self.window_size_y - self.HEADER_HEIGHT)
-            overlay_surface = pygame.Surface((overlay_rect.width, overlay_rect.height), pygame.SRCALPHA)
-            
-            if game_over_status == "win":
-                overlay_surface.fill((0, 255, 0, 128)) # green tint
-                text = "YOU WIN!"
-                text_color = (255, 255, 255)
-            else: # "loss"
-                overlay_surface.fill((255, 0, 0, 128)) # red tint
-                text = "GAME OVER"
-                text_color = (255, 255, 255)
-            
-            # draw tint
-            self.window.blit(overlay_surface, overlay_rect.topleft)
-            
-            # draw text
-            game_over_text = self.game_over_font.render(text, True, text_color)
-            text_rect = game_over_text.get_rect(center=overlay_rect.center)
-            self.window.blit(game_over_text, text_rect)
-            
-        # display updates
         pygame.display.flip()
-        self.clock.tick(10) # max 10 FPS
-        return
+        self.clock.tick(30)
 
     def close(self):
-        """Close Pygame window"""
         if self.window:
             pygame.quit()
             self.window = None
-            self.clock = None
-            self.cell_font = None
-            self.header_font = None
-            self.game_over_font = None
-            self.flag_icon = None
-            self.constraint_font = None
 
-
-# OG Minesweeper Env ===
-class MinesweeperEnv(gym.Env):
-    metadata = {"render_modes": ["ansi"]} 
-    def __init__(self, board_size=BOARD_SIZE, num_mines=NUM_MINES):
-        self.board_size = board_size
-        self.num_mines = num_mines
-        self.board = place_mines(board_size, num_mines)
-        self.my_board = np.ones((board_size, board_size), dtype=int) * CLOSED
-        self.valid_actions = np.ones((self.board_size, self.board_size), dtype=bool)
-
-        self.observation_space = spaces.Box(low=-3, high=8, 
-                                            shape=(self.board_size, self.board_size), dtype=int)
-        self.action_space = spaces.MultiDiscrete([self.board_size, self.board_size])
-
-    def count_neighbour_mines(self, x, y):
-        neighbour_mines = 0
-        for _x in range(x - 1, x + 2):
-            for _y in range(y - 1, y + 2):
-                if is_valid(_x, _y):
-                    if is_mine(self.board, _x, _y):
-                        neighbour_mines += 1
-        return neighbour_mines
-
-    def open_neighbour_cells(self, my_board, x, y):
-        for _x in range(x-1, x+2):
-            for _y in range(y-1, y+2):
-                if is_valid(_x, _y):
-                    if is_new_move(my_board, _x, _y):
-                        my_board[_x, _y] = self.count_neighbour_mines(_x, _y)
-                        if my_board[_x, _y] == 0:
-                            my_board = self.open_neighbour_cells(my_board, _x, _y)
-        return my_board
-
-    def get_next_state(self, state, x, y):
-        my_board = state
-        game_over = False
-        
-        if self.board is None:
-            raise Exception("gen_next_state called before self.board is generated")
-        
-        if is_mine(self.board, x, y):
-            my_board[x, y] = MINE
-            game_over = True
-        else:
-            my_board[x,y] = self.count_neighbor_mines(x,y)
-            #[x, y] = self.count_neighbour_mines(x, y)
-            if my_board[x, y] == 0:
-                my_board = self.open_neighbour_cells(my_board, x, y)
-        self.my_board = my_board
-        return my_board, game_over
-
-    def reset(self, seed=None, options=None):
-        super().reset(seed=seed) # Handles seeding
-        self.board = place_mines(self.board_size, self.num_mines)
-        self.my_board = np.ones((self.board_size, self.board_size), dtype=int) * CLOSED
-        self.valid_actions = np.ones((self.board_size, self.board_size), dtype=bool)
-        
-        info = {'valid_actions': self.valid_actions}
-        return self.my_board, info
-
-    def step(self, action):
-        state = self.my_board
-        x = int(round(action[0]))
-        y = int(round(action[1]))
-
-        if bool(self.valid_actions[x, y]) is False:
-            raise Exception("Invalid action was selected!")
-
-        next_state, reward, done, info = self.next_step(state, x, y)
-        self.my_board = next_state
-        self.valid_actions = (next_state == CLOSED)
-        info['valid_actions'] = (next_state == CLOSED)
-        
-        truncated = False # This env doesn't have a time limit
-        return next_state, reward, done, truncated, info
-
-    def next_step(self, state, x, y):
-        my_board = state
-        info = {}
-        if not is_new_move(my_board, x, y):
-            return my_board, -1, False, info
-        
-        state, game_over = self.get_next_state(my_board, x, y)
-        if not game_over:
-            if is_win(state):
-                return state, 1000, True, info
-            else:
-                return state, 5, False, info
-        else:
-            return state, -100, True, info
-
-    def render(self, mode='ansi'):
-        if mode == 'ansi':
-            outfile = StringIO() if mode == 'ansi' else sys.stdout
-            s = board2str(self.board)
-            outfile.write(s)
-            return outfile
-        else:
-            super().render(mode=mode) # Not supported
-    
-    def close(self):
-        pass
-
+# --- Standard Fixed Env ---
 class MinesweeperDiscreetEnv(gym.Env):
-    """
-    This version uses a discrete action space (0-99) and supports
-    Pygame rendering, flagging, score, and bomb count display.
-        → WITH the bad luck protection
-    """
     metadata = {"render_modes": ["ansi", "human"], "render_fps": 10}
 
-    def __init__(self, board_size=BOARD_SIZE, num_mines=NUM_MINES, render_mode=None):
-        
+    def __init__(self, board_size=10, num_mines=10, render_mode=None):
         self.board_size = board_size
         self.num_mines = num_mines
-        # self.board = place_mines(board_size, num_mines)
-        self.board = None # will be set on first move
-        self.my_board = np.ones((self.board_size, self.board_size), dtype=int) * CLOSED
-        self.num_actions = 0
-        
+        self.board = None
+        self.my_board = np.ones((board_size, board_size), dtype=int) * CLOSED
         self.total_reward = 0
         self.flags_placed = 0
         self.game_over_status = None
-
-        # ++ flag to track if first move has been made
         self.first_move_made = False
-        
-        # FROM CONSTRAINTS to store constraints
         self.current_constraints = []
         
-        self.observation_space = spaces.Box(low=-3, high=8, 
-                                            shape=(self.board_size, self.board_size), dtype=int)
-        self.action_space = spaces.Discrete(self.board_size * self.board_size)
-        self.valid_actions = np.ones((self.board_size * self.board_size), dtype=bool)
-
         self.render_mode = render_mode
         self.visualizer = None
         if self.render_mode == "human":
-            self.visualizer = MinesweeperVisualizer(self.board_size)
-            
-    def count_neighbour_mines(self, x, y):
-        neighbour_mines = 0
-        for _x in range(x - 1, x + 2):
-            for _y in range(y - 1, y + 2):
-                if is_valid(_x, _y):
-                    if is_mine(self.board, _x, _y):
-                        neighbour_mines += 1
-        return neighbour_mines
-
-    def open_neighbour_cells(self, my_board, x, y):
-        # safety check
-        if self.board is None:
-            # should NOT happen if logic is correct, just a safeguard
-            print("Error: Tried to open cells before board was generated.")
-            return my_board
+            self.visualizer = MinesweeperVisualizer(board_size, board_size)
         
-        for _x in range(x-1, x+2):
-            for _y in range(y-1, y+2):
-                if is_valid(_x, _y):
-                    if is_new_move(my_board, _x, _y):
-                        my_board[_x, _y] = self.count_neighbour_mines(_x, _y)
-                        if my_board[_x, _y] == 0:
-                            my_board = self.open_neighbour_cells(my_board, _x, _y)
-        return my_board
-
-    def get_next_state(self, state, x, y):
-        my_board = state
-        game_over = False
-        
-        # safety check, make sure board is generated BEFORE checking for mines
-        if self.board is None:
-            #would be a logic error if occurred
-            raise Exception("gen_next_state called before self.board is generated")
-        
-        if is_mine(self.board, x, y):
-            my_board[x, y] = MINE
-            game_over = True
-        else:
-            my_board[x, y] = self.count_neighbour_mines(x, y)
-            if my_board[x, y] == 0:
-                my_board = self.open_neighbour_cells(my_board, x, y)
-        self.my_board = my_board
-        return my_board, game_over
+        self.action_space = spaces.Discrete(board_size * board_size)
+        self.observation_space = spaces.Box(low=-3, high=8, shape=(board_size, board_size), dtype=int)
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
-        
-        #reset 'my_board' (player view)
         self.my_board = np.ones((self.board_size, self.board_size), dtype=int) * CLOSED
-        
-        #self.board = place_mines(self.board_size, self.num_mines)
-        self.board = None # will be set on first move
-        self.num_actions = 0
-        self.valid_actions = np.ones((self.board_size * self.board_size), dtype=bool)
-        
+        self.board = None
         self.total_reward = 0
         self.flags_placed = 0
-        self.game_over_status = None # RESET status
-        
+        self.game_over_status = None
         self.first_move_made = False
-        
         self.current_constraints = []
-        
-        info = {'valid_actions': self.valid_actions}
-        
-        if self.render_mode == "human":
-            self._render_frame()
-            
-        return self.my_board, info
+        return self.my_board, {}
 
     def step(self, action):
-        state = self.my_board
         x = int(action / self.board_size)
         y = int(action % self.board_size)
         
-        # BAD LUCK PROTECTION (first move)
         if not self.first_move_made:
             self.first_move_made = True
             self.board = place_mines_safely(self.board_size, self.num_mines, x, y)
-            # *debug print*
-            print(f"First move at ({x}, {y}). Board generated.")
 
-        next_state, reward, done, info = self.next_step(state, x, y)
+        if self.my_board[x,y] != CLOSED:
+            self.current_constraints = generate_constraints(self.my_board, self.board_size)
+            return self.my_board, -1, False, False, {}
+
+        if is_mine(self.board, x, y):
+            self.my_board[x,y] = MINE
+            self.game_over_status = "loss"
+            self.current_constraints = generate_constraints(self.my_board, self.board_size)
+            return self.my_board, -100, True, False, {}
         
-        self.total_reward += reward
+        self._reveal(x, y)
+        self.current_constraints = generate_constraints(self.my_board, self.board_size)
+
+        if is_win(self.my_board, self.num_mines):
+            self.game_over_status = "win"
+            return self.my_board, 1000, True, False, {}
+            
+        return self.my_board, 1, False, False, {}
+
+    def _reveal(self, x, y):
+        if not is_valid(x, y, self.board_size): return
+        if self.my_board[x, y] != CLOSED: return
         
-        self.my_board = next_state
-        self.num_actions += 1
-        self.valid_actions = (next_state.flatten() == CLOSED)
-        info['valid_actions'] = self.valid_actions
-        info['num_actions'] = self.num_actions
-
-        truncated = False 
-
-        # --- update game over status ---
-        if done:
-            if reward > 0:
-                self.game_over_status = "win"
-            else:
-                self.game_over_status = "loss"
-
-        if self.render_mode == "human":
-            self._render_frame()
-
-        return next_state, reward, done, truncated, info
-
-    def next_step(self, state, x, y):
-        my_board = state
-        info = {}
+        mines = 0
+        for dx in [-1,0,1]:
+            for dy in [-1,0,1]:
+                if dx==0 and dy==0: continue
+                nx, ny = x+dx, y+dy
+                if is_valid(nx, ny, self.board_size) and is_mine(self.board, nx, ny):
+                    mines += 1
         
-        if my_board[x, y] != CLOSED:
-            return my_board, -1, False, info
-        
-        state, game_over = self.get_next_state(my_board, x, y)
-        if not game_over:
-            if is_win(state):
-                return state, 1000, True, info
-            else:
-                return state, 5, False, info
-        else:
-            return state, -100, True, info
+        self.my_board[x, y] = mines
+        if mines == 0:
+            for dx in [-1,0,1]:
+                for dy in [-1,0,1]:
+                    if dx!=0 or dy!=0: self._reveal(x+dx, y+dy)
 
     def toggle_flag(self, x, y):
-        """place/remove a flag on a cell"""
-        if not is_valid(x, y):
-            return 
-        
+        if not is_valid(x, y, self.board_size): return
         if self.my_board[x, y] == CLOSED:
             self.my_board[x, y] = FLAG
             self.flags_placed += 1
         elif self.my_board[x, y] == FLAG:
             self.my_board[x, y] = CLOSED
             self.flags_placed -= 1
-        
-        if self.render_mode == "human":
-            self.current_constraints = generate_constraints(self.my_board, self.board_size)
-            self._render_frame()
+        self.current_constraints = generate_constraints(self.my_board, self.board_size)
+        if self.render_mode == "human": self.render()
 
     def render(self):
-        if self.render_mode == 'ansi':
-            return self._render_ansi()
-        elif self.render_mode == 'human':
-            return self._render_frame()
+        if self.render_mode == "human" and self.visualizer:
+            def getter(r, c):
+                if 0 <= r < self.board_size and 0 <= c < self.board_size:
+                    return self.my_board[r, c]
+                return CLOSED
+            self.visualizer.render_frame(getter, 0, 0, self.total_reward, self.game_over_status, self.current_constraints)
 
-    def _render_ansi(self):
-        outfile = StringIO()
-        s = board2str(self.my_board)
-        outfile.write(s)
-        sys.stdout.write(outfile.getvalue())
-        return outfile.getvalue()
-
-    def _render_frame(self):
-        if self.visualizer:
-            bombs_left = self.num_mines - self.flags_placed
-            self.visualizer.render_frame(
-                self.my_board, 
-                self.total_reward, 
-                bombs_left, 
-                self.game_over_status, 
-                self.current_constraints
-            )
-            
     def close(self):
+        if self.visualizer: self.visualizer.close()
+
+# --- INFINITE CHUNK-BASED ENV ---
+class MinesweeperInfiniteEnv:
+    CHUNK_SIZE = 16
+    DENSITY = 0.15
+
+    def __init__(self, render_mode="human", view_w=20, view_h=15):
+        self.render_mode = render_mode
+        self.mines = set()
+        self.flags = set()
+        self.revealed = {} 
+        self.generated_chunks = set()
+        self.game_over_status = None
+        self.score = 0
+        self.view_w = view_w
+        self.view_h = view_h
+        self.visualizer = None
+        if self.render_mode == "human":
+            self.visualizer = MinesweeperVisualizer(view_w, view_h)
+
+    def _get_chunk_coords(self, r, c):
+        return r // self.CHUNK_SIZE, c // self.CHUNK_SIZE
+
+    def _generate_chunk(self, cr, cc, safe_r=None, safe_c=None):
+        if (cr, cc) in self.generated_chunks: return
+        for r in range(cr * self.CHUNK_SIZE, (cr + 1) * self.CHUNK_SIZE):
+            for c in range(cc * self.CHUNK_SIZE, (cc + 1) * self.CHUNK_SIZE):
+                if safe_r is not None and abs(r - safe_r) <= 1 and abs(c - safe_c) <= 1:
+                    continue
+                if random() < self.DENSITY:
+                    self.mines.add((r, c))
+        self.generated_chunks.add((cr, cc))
+
+    def _ensure_area_generated(self, r, c, safe_mode=False):
+        cr, cc = self._get_chunk_coords(r, c)
+        for dcr in [-1, 0, 1]:
+            for dcc in [-1, 0, 1]:
+                if safe_mode and dcr == 0 and dcc == 0:
+                    self._generate_chunk(cr + dcr, cc + dcc, r, c)
+                else:
+                    self._generate_chunk(cr + dcr, cc + dcc)
+
+    def get_cell_value(self, r, c):
+        if (r, c) in self.revealed: return self.revealed[(r, c)]
+        if (r, c) in self.flags: return FLAG
+        return CLOSED
+
+    def reset(self):
+        self.mines.clear()
+        self.flags.clear()
+        self.revealed.clear()
+        self.generated_chunks.clear()
+        self.game_over_status = None
+        self.score = 0
+        return {}
+
+    def step(self, r, c):
+        if self.game_over_status: return []
+        
+        is_first_move = (len(self.revealed) == 0)
+        self._ensure_area_generated(r, c, safe_mode=is_first_move)
+
+        if (r, c) in self.flags: return []
+        
+        if (r, c) in self.mines:
+            self.revealed[(r, c)] = MINE
+            self.game_over_status = "loss"
+            self.score = len(self.revealed)
+            return []
+        
+        newly_revealed = []
+        if (r, c) not in self.revealed:
+            self._reveal_recursive(r, c, newly_revealed)
+            
+        self.score = len(self.revealed)
+        return newly_revealed
+
+    def _reveal_recursive(self, r, c, newly_revealed):
+        if (r, c) in self.revealed: return
+        
+        mine_count = 0
+        for dr in [-1, 0, 1]:
+            for dc in [-1, 0, 1]:
+                if dr==0 and dc==0: continue
+                if (r+dr, c+dc) in self.mines: mine_count += 1
+        
+        self.revealed[(r, c)] = mine_count
+        newly_revealed.append((r, c))
+        
+        if mine_count == 0:
+            for dr in [-1, 0, 1]:
+                for dc in [-1, 0, 1]:
+                    if dr==0 and dc==0: continue
+                    nr, nc = r+dr, c+dc
+                    self._ensure_area_generated(nr, nc)
+                    self._reveal_recursive(nr, nc, newly_revealed)
+
+    def toggle_flag(self, r, c):
+        if (r, c) in self.revealed: return
+        if (r, c) in self.flags: self.flags.remove((r, c))
+        else: self.flags.add((r, c))
+
+    def render(self, camera_x, camera_y):
         if self.visualizer:
-            self.visualizer.close()
-            self.visualizer = None
+            self.visualizer.render_frame(self.get_cell_value, camera_x, camera_y, self.score, self.game_over_status, [])
+
+    def close(self):
+        if self.visualizer: self.visualizer.close()

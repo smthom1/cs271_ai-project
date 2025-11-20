@@ -1,44 +1,44 @@
 import numpy as np
-# from minesweeper import CLOSED, FLAG
+from constants import CLOSED, FLAG
 
 def generate_constraints(my_board, board_size):
-    
-    #ADDED
-    from minesweeper import CLOSED, FLAG
-
     constraints = []
     
     def is_valid_local(x, y):
         return (x >= 0) and (x < board_size) and (y >= 0) and (y < board_size)
     
-    for r in range(board_size):                         #r is row num
-        for c in range(board_size):                     #c is col num
-            cell_value = my_board[r, c]                 # val of cell visible to the player atp
+    for r in range(board_size):                         # r is row num
+        for c in range(board_size):                     # c is col num
+            cell_value = my_board[r, c]                 # val of cell visible to the player
             
-            if cell_value >= 0:                         # >=0 i.e cells that are revealed, only revealed cells can give constraint
+            # only revealed number cells (>=0) provide constraints
+            if cell_value >= 0:
                 hidden_neighbors = []
                 flagged_count = 0
                 
-                for dx in [-1, 0, 1]:                   # dx is change in x: -1, left etc..
-                    for dy in [-1, 0, 1]:               #dy is chnage in y: -1, down etc...
-                        if dx == 0 and dy == 0:         # if no movement in x and y then continue 
+                for dx in [-1, 0, 1]:
+                    for dy in [-1, 0, 1]:
+                        if dx == 0 and dy == 0:
                             continue
                         
-                        nr = r + dx                     # neighbor row
-                        nc = c + dy                     # neighbor col
+                        nr = r + dx
+                        nc = c + dy
                         
                         if is_valid_local(nr, nc):
-                            neighbor_value = my_board[nr, nc]           #what board currently sees at neighbor
+                            neighbor_value = my_board[nr, nc]
                             
-                            if neighbor_value == CLOSED:                #neighbor val hidden
-                                hidden_neighbors.append((nr, nc))       #add these vars to constraint var list
-                            elif neighbor_value == FLAG:                #neighbor val already flaged
-                                flagged_count += 1                      #increment count of flaged
+                            if neighbor_value == CLOSED:
+                                hidden_neighbors.append((nr, nc))
+                            elif neighbor_value == FLAG:
+                                flagged_count += 1
                 
-                bombs_remaining = cell_value - flagged_count            #how many bombs remaining amongst hidden bombs 
+                bombs_remaining = cell_value - flagged_count
                 
-                if len(hidden_neighbors) > 0 and bombs_remaining >= 0:  #only create constraint when unkown neighbors to constrain
-                    constraint = (hidden_neighbors, bombs_remaining)    #(list of coords, int)
+                # only create constraint if hidden neighbors involved
+                if len(hidden_neighbors) > 0:
+                    # if bombs_remaining < 0, player made a mistake (flagged too many), 
+                    # (pass it anyway or clamp)
+                    constraint = (hidden_neighbors, bombs_remaining) 
                     constraints.append(constraint)
     
     return constraints
