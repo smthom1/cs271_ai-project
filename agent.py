@@ -9,14 +9,16 @@ from constants import CLOSED, FLAG
 def get_neighbors(board_state, r, c):
     neighbors = []
     board_size = board_state.shape[0]
-    
+
+    # check a 3x3 grid around the cell, skipping center cell itself
     for _r in range(r - 1, r + 2):
         for _c in range(c - 1, c + 2):
-            if (_r == r and _c == c): continue
-            if is_valid(_r, _c, board_size):
+            if (_r == r and _c == c): continue          # << center cell
+            if is_valid(_r, _c, board_size):            # "are coordinates on board?"
                 neighbors.append( ((_r, _c), board_state[_r, _c]) )
     return neighbors
 
+# Implementation of "Intelligence" (hard logic)!
 def find_safe_moves(board_state):
     safe_moves = set()
     board_size = board_state.shape[0]
@@ -24,15 +26,17 @@ def find_safe_moves(board_state):
     for r in range(board_size):
         for c in range(board_size):
             cell_value = board_state[r, c]
-            
+
+            # check only revealed cell numbers for insight (ignores empty space and unrevealed cells)
             if cell_value > 0 and cell_value <= 8:
-                num_flagged_neighbors = 0
+                num_flagged_neighbors = 0                # empty space = 0, unrevealed = -1
                 closed_neighbors = [] 
                 
                 for (nr, nc), n_val in get_neighbors(board_state, r, c):
                     if n_val == FLAG: num_flagged_neighbors += 1
                     elif n_val == CLOSED: closed_neighbors.append((nr, nc))
-                
+
+                # if flags == num, all other neighbors are considered "safe"
                 if num_flagged_neighbors == cell_value:
                     for (nr, nc) in closed_neighbors:
                         safe_moves.add((nr, nc))
@@ -52,32 +56,36 @@ def find_flag_moves(board_state):
                 for (nr, nc), n_val in get_neighbors(board_state, r, c):
                     if n_val == FLAG: num_flagged_neighbors += 1
                     elif n_val == CLOSED: closed_neighbors.append((nr, nc))
-                
+
+                # if hidden cells + flags = num, remaining *must* be mines
                 if (num_flagged_neighbors + len(closed_neighbors)) == cell_value:
                     for (nr, nc) in closed_neighbors:
                         flag_moves.add((nr, nc))
     return flag_moves
 
 def run_agent_game():
-    env = MinesweeperDiscreetEnv(render_mode="human")
+    env = MinesweeperDiscreetEnv(render_mode="human") # Gymansium Environment
     observation, info = env.reset()
     board_state = observation
     done = False
     
     print("--- AGENT GAME START ---")
+    # random start to open up board
     first_r = random.randint(0, env.board_size - 1)
     first_c = random.randint(0, env.board_size - 1)
     first_action = first_r * env.board_size + first_c
     print(f"Making random first move at: ({first_r}, {first_c})")
-    
+
+    # returns new grid state after move
     observation, reward, done, truncated, info = env.step(first_action)
     
     while not done:    
         made_a_move_in_loop = True
-        while made_a_move_in_loop and not done:
+        while made_a_move_in_loop and not done:        # determinisitic! keep solving while logic moves exist
             made_a_move_in_loop = False 
             board_state = observation   
-            
+
+            # MAIN PRIORITY: execute safe moves
             safe_moves_to_make = find_safe_moves(board_state)
             if safe_moves_to_make:
                 print(f"Found {len(safe_moves_to_make)} safe moves")
@@ -88,6 +96,7 @@ def run_agent_game():
                         observation, reward, done, truncated, info = env.step(action)
                 continue 
 
+            # 2nd PRIORITY: flag known mines
             flag_moves_to_make = find_flag_moves(board_state)
             if flag_moves_to_make:
                 print(f"Found {len(flag_moves_to_make)} mines to flag")
@@ -97,8 +106,8 @@ def run_agent_game():
                         env.toggle_flag(r, c)
                 observation = env.my_board
                 continue
-        
-        if not done:
+
+        if not done:                                # stochastic! if no logic moves, must guess
             print("\n--- AGENT STUCK ---")
             closed_r, closed_c = np.where(board_state == CLOSED)
             if len(closed_r) == 0: break 
