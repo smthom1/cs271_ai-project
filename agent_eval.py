@@ -1,52 +1,135 @@
-# agent_eval.py
 import numpy as np
 import random
 import matplotlib.pyplot as plt
 import pandas as pd
+from collections import defaultdict
 from minesweeper import MinesweeperDiscreetEnv, is_valid
 from constants import CLOSED, FLAG
+from constraints import generate_constraints
 
-def get_neighbors(board_state, r, c):
-    neighbors = []
+def solve_csp(board_state):
     board_size = board_state.shape[0]
-    for _r in range(r - 1, r + 2):
-        for _c in range(c - 1, c + 2):
-            if (_r == r and _c == c): continue
-            if is_valid(_r, _c, board_size):
-                neighbors.append( ((_r, _c), board_state[_r, _c]) )
-    return neighbors
+    
+    # 1. generate constraints based on revealed numbers
+    all_constraints = generate_constraints(board_state, board_size)
+    
+    if not all_constraints:
+        return set(), set()
 
-def find_safe_moves(board_state):
+    # 2. map variables (hidden cells) to the constraints they belong to
+    var_to_constraints = defaultdict(list)
+    all_vars = set()
+    
+    for i, (vars_in_constraint, needed) in enumerate(all_constraints):
+        for v in vars_in_constraint:
+            var_to_constraints[v].append(i)
+            all_vars.add(v)
+            
+    # 3. find connected components (groups of variables that interact)
+    # variables are connected if they share a constraint
+    components = []
+    visited = set()
+    
+    for v in all_vars:
+        if v in visited: continue
+            
+        # bfs to gather all connected variables for this component
+        component_vars = set([v])
+        q = [v]
+        visited.add(v)
+        
+        while q:
+            curr = q.pop(0)
+            for c_idx in var_to_constraints[curr]:
+                c_vars, _ = all_constraints[c_idx]
+                for neighbor in c_vars:
+                    if neighbor not in visited:
+                        visited.add(neighbor)
+                        component_vars.add(neighbor)
+                        q.append(neighbor)
+        components.append(list(component_vars))
+
+    # 4. solve each component independently
     safe_moves = set()
-    board_size = board_state.shape[0]
-    for r in range(board_size):
-        for c in range(board_size):
-            cell_value = board_state[r, c]
-            if cell_value > 0 and cell_value <= 8:
-                num_flagged_neighbors = 0
-                closed_neighbors = []
-                for (nr, nc), n_val in get_neighbors(board_state, r, c):
-                    if n_val == FLAG: num_flagged_neighbors += 1
-                    elif n_val == CLOSED: closed_neighbors.append((nr, nc))
-                if num_flagged_neighbors == cell_value:
-                    for (nr, nc) in closed_neighbors: safe_moves.add((nr, nc))
-    return safe_moves
-
-def find_flag_moves(board_state):
     flag_moves = set()
-    board_size = board_state.shape[0]
-    for r in range(board_size):
-        for c in range(board_size):
-            cell_value = board_state[r, c]
-            if cell_value > 0 and cell_value <= 8:
-                num_flagged_neighbors = 0
-                closed_neighbors = []
-                for (nr, nc), n_val in get_neighbors(board_state, r, c):
-                    if n_val == FLAG: num_flagged_neighbors += 1
-                    elif n_val == CLOSED: closed_neighbors.append((nr, nc))
-                if (num_flagged_neighbors + len(closed_neighbors)) == cell_value:
-                    for (nr, nc) in closed_neighbors: flag_moves.add((nr, nc))
-    return flag_moves
+    
+    for comp_vars in components:
+        # gather only the constraints relevant to this specific component
+        comp_constraints = []
+        seen_constraint_indices = set()
+        for v in comp_vars:
+            for c_idx in var_to_constraints[v]:
+                if c_idx not in seen_constraint_indices:
+                    seen_constraint_indices.add(c_idx)
+                    comp_constraints.append(all_constraints[c_idx])
+        
+        # find all valid mine arrangements for this component
+        solutions = backtracking_solve(comp_vars, comp_constraints)
+        if not solutions: continue
+
+        # check for unanimous agreement across all solutions
+        for i, v in enumerate(comp_vars):
+            can_be_safe = False
+            can_be_mine = False
+            
+            for sol in solutions:
+                if sol[v] == 0: can_be_safe = True # it's SAFE in at least one solution
+                if sol[v] == 1: can_be_mine = True # it's a MINE in at least one solution
+            
+            # if it CAN be safe but NEVER mine -> guaranteed safe
+            if can_be_safe and not can_be_mine: safe_moves.add(v)
+            # if it CAN be mine but NEVER safe -> guaranteed mine
+            if can_be_mine and not can_be_safe: flag_moves.add(v)
+
+    return safe_moves, flag_moves
+
+def backtracking_solve(variables, constraints):
+    solutions = []
+    
+    # heuristic: sort variables by how many constraints they appear in
+    # this causes conflicts to happen earlier, pruning the tree faster
+    var_counts = defaultdict(int)
+    for v_list, _ in constraints:
+        for v in v_list: var_counts[v] += 1
+    variables.sort(key=lambda v: -var_counts[v])
+    
+    assignment = {} 
+
+    def is_valid(assignment):
+        # check if current assignment violates any constraint
+        for v_list, limit in constraints:
+            current_sum = 0
+            unassigned = 0
+            for v in v_list:
+                if v in assignment: current_sum += assignment[v]
+                else: unassigned += 1
+            
+            # violation 1: placed mines exceed the number on the board
+            if current_sum > limit: return False
+            # violation 2: remaining empty spots aren't enough to satisfy the number
+            if current_sum + unassigned < limit: return False
+        return True
+
+    def backtrack(idx):
+        # limit solutions to prevent hanging on large open areas
+        if len(solutions) > 1000: return
+        
+        # base case: all variables assigned successfully
+        if idx == len(variables):
+            solutions.append(assignment.copy())
+            return
+
+        curr_var = variables[idx]
+        # try assigning 0 (safe) then 1 (mine)
+        for val in [0, 1]:
+            assignment[curr_var] = val
+            if is_valid(assignment): backtrack(idx + 1)
+        del assignment[curr_var]
+
+    backtrack(0)
+    return solutions
+
+# --- EVALUATION ---
 
 def run_single_eval_game():
     env = MinesweeperDiscreetEnv(render_mode="None")
@@ -55,6 +138,7 @@ def run_single_eval_game():
     done = False
     good_moves = 0
     
+    # start with a random move to open the board
     first_r = random.randint(0, env.board_size - 1)
     first_c = random.randint(0, env.board_size - 1)
     first_action = first_r * env.board_size + first_c
@@ -63,37 +147,36 @@ def run_single_eval_game():
     if not done: good_moves += 1
     
     while not done:    
-        made_a_move_in_loop = True
-        while made_a_move_in_loop and not done:
-            made_a_move_in_loop = False
-            board_state = observation
-            safe_moves = find_safe_moves(board_state)
+        made_logic_move = True
+        
+        # keep applying logic until stuck
+        while made_logic_move and not done:
+            made_logic_move = False
+            safe, flags = solve_csp(observation)
             
-            if safe_moves:
-                made_a_move_in_loop = True
-                for (r, c) in safe_moves:
+            if safe or flags:
+                made_logic_move = True
+                # apply flags (internal tracking only)
+                for (r, c) in flags:
+                    if observation[r, c] == CLOSED: 
+                        env.toggle_flag(r, c)
+                
+                # apply safe moves (actual game steps)
+                for (r, c) in safe:
                     if observation[r, c] == CLOSED and not done:
                         action = r * env.board_size + c
                         observation, reward, done, truncated, info = env.step(action)
                         if not done or env.game_over_status == "win": good_moves += 1
-                continue 
 
-            flag_moves = find_flag_moves(board_state)
-            if flag_moves:
-                made_a_move_in_loop = True
-                for (r, c) in flag_moves:
-                    if observation[r, c] == CLOSED: env.toggle_flag(r, c)
-                observation = env.my_board
-                continue
-        
         if not done:
+            # logic failed, forced to guess
             closed_r, closed_c = np.where(board_state == CLOSED)
             if len(closed_r) == 0: break
             
+            # pick a random closed cell
             random_index = random.randint(0, len(closed_r) - 1)
             guess_action = closed_r[random_index] * env.board_size + closed_c[random_index]
             observation, reward, done, truncated, info = env.step(guess_action)
-
             if not done or env.game_over_status == "win": good_moves += 1
         
     won = (env.game_over_status == "win")
