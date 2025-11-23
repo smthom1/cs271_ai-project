@@ -1,4 +1,5 @@
 import numpy as np
+import time
 import random
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -137,6 +138,10 @@ def run_single_eval_game():
     board_state = observation
     done = False
     good_moves = 0
+    total_clicks = 0 
+
+    # track start time
+    start_time = time.time()
     
     # start with a random move to open the board
     first_r = random.randint(0, env.board_size - 1)
@@ -145,7 +150,9 @@ def run_single_eval_game():
     observation, reward, done, truncated, info = env.step(first_action)
 
     if not done: good_moves += 1
-    
+
+
+    done = False
     while not done:    
         made_logic_move = True
         
@@ -179,9 +186,17 @@ def run_single_eval_game():
             observation, reward, done, truncated, info = env.step(guess_action)
             if not done or env.game_over_status == "win": good_moves += 1
         
+    # Track end time
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+
     won = (env.game_over_status == "win")
     env.close()
-    return {'won': won, 'good_moves': good_moves}
+    return {
+        'won': won,
+        'good_moves': good_moves,
+        'elapsed_time': elapsed_time,
+    }
 
 def run_evaluation(num_games=100):
     print(f"\nRunning {num_games} games...")
@@ -197,11 +212,16 @@ def run_evaluation(num_games=100):
     loss_results = [r for r in results if not r['won']]
     good_moves_in_losses = [r['good_moves'] for r in loss_results]
     
+    # avg time for games that were won
+    won_results = [r for r in results if r['won']]
+    avg_time_to_win = np.mean([r['elapsed_time'] for r in won_results]) if won_results else 0
+
     return {
         'num_games': num_games,
         'wins': wins,
         'losses': losses,
         'win_rate': win_rate,
+        'avg_time_to_win': avg_time_to_win,
         'good_moves_in_losses': good_moves_in_losses,
         'avg_good_moves_when_lost': np.mean(good_moves_in_losses) if good_moves_in_losses else 0
     }
@@ -211,6 +231,8 @@ def print_results(stats):
     print(f"Wins:         {stats['wins']}")
     print(f"Losses:       {stats['losses']}")
     print(f"Win Rate:     {stats['win_rate']}%")
+    if stats['wins'] > 0:
+        print(f"Avg Time to Win: {stats['avg_time_to_win']:.2f} seconds")
     if stats['losses'] > 0:
         print(f"Avg Good Moves Before Dying: {stats['avg_good_moves_when_lost']:.2f}")
 
