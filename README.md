@@ -1,14 +1,18 @@
 # COMPSCI 271P: Minesweeper AI
+
 ### **Team 9:** Eric Yao Huang, Samantha Juteram, Midhuna Mohanraj, Sophia Thompson
 
 ## How to Run
+
 Ensure that all `.py` files (including `minesweeper.py`, `constants.py`, and `constraints.py`) are in the same directory.
 
-### 1. Manual Play (Human vs. Game)
+### 1\. Manual Play (Human vs. Game)
+
 To play the game yourself using the visual interface:
+
 ```
 python run_game.py
-````
+```
 
 *A popup will appear asking you to choose between **Standard Mode** (Fixed Grid) or **Infinite Mode** (Expanding).*
 
@@ -34,6 +38,7 @@ These agents play on a map that generates forever. Choose your version:
 These agents play on the classic Minesweeper board to test win/loss rates.
 
   * **Single Game Demo:** Watch the agent play one game in real-time.
+    *It utilizes a global CSP solver to identify connected components across the entire board, ensuring mathematically guaranteed moves where possible.*
     ```
     python agent.py
     ```
@@ -41,6 +46,34 @@ These agents play on the classic Minesweeper board to test win/loss rates.
     ```
     python agent_eval.py
     ```
+
+-----
+
+### 4\. Running via Docker (Optional)
+
+If you prefer to run the environment in a container, a `dockerfile` is provided.
+
+**1. Build the image:**
+
+```
+docker build -t minesweeper-ai .
+```
+
+**2. Run the container:**
+
+*Note: Because this application uses a GUI (Pygame/Tkinter), you must pass display environment variables. This requires an X Server (like VcXsrv on Windows or XQuartz on Mac).*
+
+```
+# Linux / WSL2 (Ensure X Server is allowing public access)
+docker run -it --rm -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix minesweeper-ai
+```
+
+**3. Execute commands:**
+Once inside the container shell, you can run any of the standard commands:
+
+```
+python agent_inf_balanced.py
+```
 
 -----
 
@@ -57,7 +90,7 @@ The agent uses a **Constraint Satisfaction Problem (CSP)** solver to navigate th
 
 ### Infinite Agent Versions
 
-  * **Speed Version (`agent_inf_50-50.py`):** Prioritizes raw speed. It limits the math solver to 50 attempts and checks only 3 local areas before guessing. High volatility.
+  * **Speed Version (`agent_inf_50-50.py`):** Prioritizes speed. It limits the math solver to 50 attempts and checks only 3 local areas before guessing. High volatility.
   * **Balanced Version (`agent_inf_balanced.py`):** Trades speed for intelligence. It searches 5x as many possibilities (250 attempts) and scans 15 local areas per step. Drastically reduces unforced errors.
 
 ## Scoring System
@@ -76,4 +109,5 @@ pip install numpy gymnasium pygame six pandas matplotlib
 ## Acknowledgements
 
 Based on A. Aylin Tokuc's gym-minesweeper environment.
+
   - Repository: http://github.com/aylint/gym-minesweeper
