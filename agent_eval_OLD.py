@@ -1,4 +1,3 @@
-# agent_eval.py
 import numpy as np
 import random
 import matplotlib.pyplot as plt
@@ -8,7 +7,7 @@ from minesweeper import MinesweeperDiscreetEnv, is_valid
 from constants import CLOSED, FLAG
 
 # config
-RENDER_DELAY = 0.1 # delay between moves
+RENDER_DELAY = 0.1 # delay between moves (seconds)
 
 def get_neighbors(board_state, r, c):
     neighbors = []
@@ -63,7 +62,9 @@ def run_single_eval_game():
     first_r = random.randint(0, env.board_size - 1)
     first_c = random.randint(0, env.board_size - 1)
     first_action = first_r * env.board_size + first_c
+    
     observation, reward, done, truncated, info = env.step(first_action)
+    env.total_reward += reward  # <--- UPDATE SCORE MANUALLY
 
     if env.render_mode == "human":
         env.render()
@@ -89,6 +90,8 @@ def run_single_eval_game():
                     if observation[r, c] == CLOSED and not done:
                         action = r * env.board_size + c
                         observation, reward, done, truncated, info = env.step(action)
+                        env.total_reward += reward  # <--- UPDATE SCORE MANUALLY
+                        
                         if not done or env.game_over_status == "win": good_moves += 1
                         
                         if env.render_mode == "human":
@@ -119,6 +122,7 @@ def run_single_eval_game():
             random_index = random.randint(0, len(closed_r) - 1)
             guess_action = closed_r[random_index] * env.board_size + closed_c[random_index]
             observation, reward, done, truncated, info = env.step(guess_action)
+            env.total_reward += reward  # <--- UPDATE SCORE MANUALLY
 
             if env.render_mode == "human":
                 env.render()
@@ -130,7 +134,7 @@ def run_single_eval_game():
     env.close()
     return {'won': won, 'good_moves': good_moves}
 
-def run_evaluation(num_games=100):
+def run_evaluation(num_games=5):
     print(f"\nRunning {num_games} games...")
     results = []
     for i in range(num_games):
