@@ -3,8 +3,12 @@ import numpy as np
 import random
 import matplotlib.pyplot as plt
 import pandas as pd
+import time
 from minesweeper import MinesweeperDiscreetEnv, is_valid
 from constants import CLOSED, FLAG
+
+# config
+RENDER_DELAY = 0.1 # delay between moves
 
 def get_neighbors(board_state, r, c):
     neighbors = []
@@ -49,24 +53,34 @@ def find_flag_moves(board_state):
     return flag_moves
 
 def run_single_eval_game():
-    env = MinesweeperDiscreetEnv(render_mode="None")
+    env = MinesweeperDiscreetEnv(render_mode="human") 
     observation, info = env.reset()
     board_state = observation
     done = False
     good_moves = 0
     
+    # 0. start with random move
     first_r = random.randint(0, env.board_size - 1)
     first_c = random.randint(0, env.board_size - 1)
     first_action = first_r * env.board_size + first_c
     observation, reward, done, truncated, info = env.step(first_action)
 
+    if env.render_mode == "human":
+        env.render()
+        time.sleep(RENDER_DELAY)
+
     if not done: good_moves += 1
     
+    # main loop
     while not done:    
         made_a_move_in_loop = True
+        
+        # logic loop: keep applying logic until stuck
         while made_a_move_in_loop and not done:
             made_a_move_in_loop = False
             board_state = observation
+            
+            # 1. try guaranteed safe moves (priority)
             safe_moves = find_safe_moves(board_state)
             
             if safe_moves:
@@ -76,16 +90,28 @@ def run_single_eval_game():
                         action = r * env.board_size + c
                         observation, reward, done, truncated, info = env.step(action)
                         if not done or env.game_over_status == "win": good_moves += 1
-                continue 
+                        
+                        if env.render_mode == "human":
+                            env.render()
+                            time.sleep(RENDER_DELAY)
+                continue # if we moved, re-scan board immediately
 
+            # 2. if no safe moves, try guaranteed flags
             flag_moves = find_flag_moves(board_state)
             if flag_moves:
                 made_a_move_in_loop = True
                 for (r, c) in flag_moves:
-                    if observation[r, c] == CLOSED: env.toggle_flag(r, c)
+                    if observation[r, c] == CLOSED: 
+                        env.toggle_flag(r, c)
+                        
+                        if env.render_mode == "human":
+                            env.render()
+                            time.sleep(RENDER_DELAY)
+
                 observation = env.my_board
-                continue
+                continue # flags might reveal new safe moves, so re-scan
         
+        # 3. logic failed (stuck)? forced to guess randomly
         if not done:
             closed_r, closed_c = np.where(board_state == CLOSED)
             if len(closed_r) == 0: break
@@ -93,6 +119,10 @@ def run_single_eval_game():
             random_index = random.randint(0, len(closed_r) - 1)
             guess_action = closed_r[random_index] * env.board_size + closed_c[random_index]
             observation, reward, done, truncated, info = env.step(guess_action)
+
+            if env.render_mode == "human":
+                env.render()
+                time.sleep(RENDER_DELAY)
 
             if not done or env.game_over_status == "win": good_moves += 1
         
@@ -104,7 +134,7 @@ def run_evaluation(num_games=100):
     print(f"\nRunning {num_games} games...")
     results = []
     for i in range(num_games):
-        if (i + 1) % 10 == 0: print(f"Completed {i+1}/{num_games} games...")
+        print(f"Starting game {i+1}/{num_games}...")
         results.append(run_single_eval_game())
 
     wins = sum(1 for r in results if r['won'])
@@ -149,6 +179,6 @@ def make_graphs(stats):
         print(f"Could not generate graphs: {e}")
 
 if __name__ == "__main__":
-    stats = run_evaluation(num_games=100)
+    stats = run_evaluation(num_games=5) 
     print_results(stats)
     make_graphs(stats)
