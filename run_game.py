@@ -1,3 +1,8 @@
+# +1 Point: For every safe cell you successfully reveal.
+# +1000 Points: Bonus for winning the game (clearing the board)
+# -100 Points: Penalty for hitting a mine (losing)
+# -1 Point: Penalty for wasting a turn on a cell that is already open
+
 import pygame
 import sys
 import tkinter as tk
@@ -127,8 +132,12 @@ while running:
                             # std mode
                             if 0 <= screen_r < env.board_size and 0 <= screen_c < env.board_size:
                                 action = screen_r * env.board_size + screen_c
-                                if event.button == 1: env.step(action)
-                                elif event.button == 3: env.toggle_flag(screen_r, screen_c)
+                                if event.button == 1: 
+                                    # capture reward to update score
+                                    obs, reward, done, truncated, info = env.step(action)
+                                    env.total_reward += reward # <--- SCORE FIX
+                                elif event.button == 3: 
+                                    env.toggle_flag(screen_r, screen_c)
 
     clock.tick(30) # keep loop from spinning too fast
 
