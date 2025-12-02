@@ -8,6 +8,9 @@ from minesweeper import MinesweeperDiscreetEnv, is_valid
 from constants import CLOSED, FLAG
 from constraints import generate_constraints
 
+# config
+RENDER_DELAY = 0.1 # delay between moves
+
 def solve_csp(board_state):
     board_size = board_state.shape[0]
     
@@ -133,7 +136,7 @@ def backtracking_solve(variables, constraints):
 # --- EVALUATION ---
 
 def run_single_eval_game():
-    env = MinesweeperDiscreetEnv(render_mode="None")
+    env = MinesweeperDiscreetEnv(render_mode="human")
     observation, info = env.reset()
     board_state = observation
     done = False
@@ -143,40 +146,54 @@ def run_single_eval_game():
     # track start time
     start_time = time.time()
     
-    # start with a random move to open the board
+    # 0. start with a random move to open the board
     first_r = random.randint(0, env.board_size - 1)
     first_c = random.randint(0, env.board_size - 1)
     first_action = first_r * env.board_size + first_c
     observation, reward, done, truncated, info = env.step(first_action)
+    env.total_reward += reward # update score manually
+
+    if env.render_mode == "human":
+        env.render()
+        time.sleep(RENDER_DELAY)
 
     if not done: good_moves += 1
-
 
     done = False
     while not done:    
         made_logic_move = True
         
-        # keep applying logic until stuck
+        # logic loop: keep applying logic until stuck
         while made_logic_move and not done:
             made_logic_move = False
             safe, flags = solve_csp(observation)
             
             if safe or flags:
                 made_logic_move = True
-                # apply flags (internal tracking only)
+                
+                # 1. apply guaranteed flags (csp said 'always mine')
                 for (r, c) in flags:
                     if observation[r, c] == CLOSED: 
                         env.toggle_flag(r, c)
+                        if env.render_mode == "human": # pause after flag
+                            env.render()
+                            time.sleep(RENDER_DELAY)
                 
-                # apply safe moves (actual game steps)
+                # 2. apply guaranteed safe moves (csp said 'always safe')
                 for (r, c) in safe:
                     if observation[r, c] == CLOSED and not done:
                         action = r * env.board_size + c
                         observation, reward, done, truncated, info = env.step(action)
+                        env.total_reward += reward # update score manually
+                        
                         if not done or env.game_over_status == "win": good_moves += 1
+                        
+                        if env.render_mode == "human": # pause after safe move
+                            env.render()
+                            time.sleep(RENDER_DELAY)
 
+        # 3. logic failed? forced to guess
         if not done:
-            # logic failed, forced to guess
             closed_r, closed_c = np.where(board_state == CLOSED)
             if len(closed_r) == 0: break
             
@@ -184,6 +201,12 @@ def run_single_eval_game():
             random_index = random.randint(0, len(closed_r) - 1)
             guess_action = closed_r[random_index] * env.board_size + closed_c[random_index]
             observation, reward, done, truncated, info = env.step(guess_action)
+            env.total_reward += reward # update score manually
+            
+            if env.render_mode == "human": # pause after guess
+                env.render()
+                time.sleep(RENDER_DELAY)
+
             if not done or env.game_over_status == "win": good_moves += 1
         
     # Track end time
@@ -198,11 +221,11 @@ def run_single_eval_game():
         'elapsed_time': elapsed_time,
     }
 
-def run_evaluation(num_games=100):
+def run_evaluation(num_games=5): # reduced count for human viewing
     print(f"\nRunning {num_games} games...")
     results = []
     for i in range(num_games):
-        if (i + 1) % 10 == 0: print(f"Completed {i+1}/{num_games} games...")
+        if (i + 1) % 1 == 0: print(f"Starting game {i+1}/{num_games}...")
         results.append(run_single_eval_game())
 
     wins = sum(1 for r in results if r['won'])
@@ -254,6 +277,6 @@ def make_graphs(stats):
         print(f"Could not generate graphs: {e}")
 
 if __name__ == "__main__":
-    stats = run_evaluation(num_games=100)
+    stats = run_evaluation(num_games=5) # set to 5 for demo
     print_results(stats)
     make_graphs(stats)
